@@ -21,3 +21,6 @@ yarn-debug.log*
 yarn-error.log*
 
 .windsurf
+/build
+/node_modules/*
+/.windsurf
