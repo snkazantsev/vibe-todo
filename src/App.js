@@ -81,6 +81,15 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Helper to format current tasks as context for Gemini
+  const getTasksContext = () => {
+    if (tasks.length === 0) return 'The list is currently empty.';
+    return tasks.map(t => {
+      const status = t.completed ? 'Completed' : 'Active';
+      return `- [${t.priority.toUpperCase()}] ${t.text} (${status})`;
+    }).join('\n');
+  };
+
   // Gemini API function
   const callGeminiAPI = async (message) => {
     let apiKey = localStorage.getItem('gemini_api_key');
@@ -131,6 +140,21 @@ function App() {
     }
 
     try {
+      const systemPrompt = `You are a helpful task management assistant for Vibe Todo. Your job is to help users manage their To-Do list.
+You must always reply in JSON format with this exact schema:
+{
+  "action": "addTask" or "none",
+  "task": {
+    "text": "string (the task title)",
+    "priority": "high", "medium", or "low"
+  },
+  "reply": "string (friendly confirmation or chat response in the language the user used)"
+}
+
+If the user wants to add a task, set "action" to "addTask", parse the task content into "task.text" (translate if necessary, keep it clear and concise in the user's language), and classify the priority into "task.priority" (default to "medium" if unspecified).
+If the user is just chatting or asking a general question, set "action" to "none" and formulate a helpful response in "reply".
+Always match the language of the user in your "reply".`;
+
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: {
@@ -139,10 +163,16 @@ function App() {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: message
+              text: `Current task list:\n${getTasksContext()}\n\nUser message: ${message}`
             }]
           }],
+          systemInstruction: {
+            parts: [{
+              text: systemPrompt
+            }]
+          },
           generationConfig: {
+            responseMimeType: "application/json",
             temperature: 0.7,
             topK: 40,
             topP: 0.95,
@@ -163,6 +193,43 @@ function App() {
       const data = await response.json();
       const aiResponse = data.candidates[0]?.content?.parts[0]?.text || 'No response received';
 
+      let action = 'none';
+      let task = null;
+      let chatReply = aiResponse;
+
+      try {
+        const parsed = JSON.parse(aiResponse);
+        action = parsed.action || 'none';
+        task = parsed.task || null;
+        chatReply = parsed.reply || aiResponse;
+      } catch (e) {
+        console.log('Gemini did not return valid JSON, falling back to raw text:', e);
+      }
+
+      if (action === 'addTask' && task && task.text) {
+        const newTask = {
+          id: Date.now(),
+          text: task.text,
+          completed: false,
+          isNew: true,
+          priority: task.priority || 'medium',
+          createdAt: Date.now(),
+          subtasks: [],
+          totalElapsed: 0,
+          lastStartTime: null,
+          isRunning: false
+        };
+        
+        setTasks(prevTasks => [...prevTasks, newTask]);
+        
+        // Remove animation class after 300ms
+        setTimeout(() => {
+          setTasks(prev => prev.map(t => 
+            t.id === newTask.id ? { ...t, isNew: false } : t
+          ));
+        }, 300);
+      }
+
       // Add AI response
       const messagesContainer = document.getElementById('chatMessages');
       const aiMessage = document.createElement('div');
@@ -175,7 +242,7 @@ function App() {
         </div>
         <div class="flex-1">
           <div class="bg-gray-100 rounded-lg p-2 max-w-xs">
-            <p class="text-sm text-gray-800">${aiResponse.replace(/\n/g, '<br>')}</p>
+            <p class="text-sm text-gray-800">${chatReply.replace(/\n/g, '<br>')}</p>
           </div>
         </div>
       `;
