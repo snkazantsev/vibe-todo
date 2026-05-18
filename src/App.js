@@ -27,6 +27,11 @@ function App() {
   const [recognitionInstance, setRecognitionInstance] = useState(null);
   const [chatInputValue, setChatInputValue] = useState('');
 
+  // Task planned hours states
+  const [plannedHoursInput, setPlannedHoursInput] = useState('');
+  const [editingPlannedHoursId, setEditingPlannedHoursId] = useState(null);
+  const [editingPlannedHoursValue, setEditingPlannedHoursValue] = useState('');
+
   // Load tasks from localStorage on mount
   useEffect(() => {
     const savedTasks = localStorage.getItem('vibe-todo-tasks');
@@ -200,7 +205,8 @@ function App() {
     if (tasks.length === 0) return 'The list is currently empty.';
     return tasks.map(t => {
       const status = t.completed ? 'Completed' : 'Active';
-      return `- [${t.priority.toUpperCase()}] ${t.text} (${status})`;
+      const planStr = t.plannedHours ? `, Plan: ${t.plannedHours.toFixed(1)}h` : ', Plan: 0.0h';
+      return `- [${t.priority.toUpperCase()}] ${t.text} (${status}${planStr})`;
     }).join('\n');
   };
 
@@ -260,12 +266,13 @@ You must always reply in JSON format with this exact schema:
   "action": "addTask" or "none",
   "task": {
     "text": "string (the task title)",
-    "priority": "high", "medium", or "low"
+    "priority": "high", "medium", or "low",
+    "plannedHours": "number (estimate in hours, e.g. 1.5, 3.0, 0 if unspecified)"
   },
   "reply": "string (friendly confirmation or chat response in the language the user used)"
 }
 
-If the user wants to add a task, set "action" to "addTask", parse the task content into "task.text" (translate if necessary, keep it clear and concise in the user's language), and classify the priority into "task.priority" (default to "medium" if unspecified).
+If the user wants to add a task, set "action" to "addTask", parse the task content into "task.text" (translate if necessary, keep it clear and concise in the user's language), classify the priority into "task.priority" (default to "medium" if unspecified), and parse the planned time in hours into "task.plannedHours" (default to 0 if unspecified).
 If the user is just chatting or asking a general question, set "action" to "none" and formulate a helpful response in "reply".
 Always match the language of the user in your "reply".`;
 
@@ -327,6 +334,7 @@ Always match the language of the user in your "reply".`;
           completed: false,
           isNew: true,
           priority: task.priority || 'medium',
+          plannedHours: parseFloat(task.plannedHours) || 0,
           createdAt: Date.now(),
           subtasks: [],
           totalElapsed: 0,
@@ -394,12 +402,14 @@ Always match the language of the user in your "reply".`;
   const addTask = () => {
     if (inputValue.trim() === '') return;
     
+    const parsedHours = parseFloat(plannedHoursInput);
     const newTask = {
       id: Date.now(),
       text: inputValue,
       completed: false,
       isNew: true,
       priority: selectedPriority,
+      plannedHours: isNaN(parsedHours) || parsedHours < 0 ? 0 : parsedHours,
       createdAt: Date.now(),
       subtasks: [],
       totalElapsed: 0,
@@ -409,6 +419,7 @@ Always match the language of the user in your "reply".`;
     
     setTasks([...tasks, newTask]);
     setInputValue('');
+    setPlannedHoursInput('');
     
     // Remove the animation flag after animation completes
     setTimeout(() => {
@@ -638,6 +649,36 @@ Always match the language of the user in your "reply".`;
     setEditingTimeValue('');
   };
 
+  const startEditingPlannedHours = (taskId, plannedHours) => {
+    setEditingPlannedHoursId(taskId);
+    setEditingPlannedHoursValue(plannedHours > 0 ? plannedHours.toString() : '');
+  };
+
+  const savePlannedHoursEdit = (taskId) => {
+    const val = parseFloat(editingPlannedHoursValue);
+    const parsedHours = isNaN(val) || val < 0 ? 0 : val;
+    
+    setTasks(prev => prev.map(task => 
+      task.id === taskId ? { ...task, plannedHours: parsedHours } : task
+    ));
+    
+    setEditingPlannedHoursId(null);
+    setEditingPlannedHoursValue('');
+  };
+
+  const cancelPlannedHoursEdit = () => {
+    setEditingPlannedHoursId(null);
+    setEditingPlannedHoursValue('');
+  };
+
+  const handlePlannedHoursEditKeyPress = (e, taskId) => {
+    if (e.key === 'Enter') {
+      savePlannedHoursEdit(taskId);
+    } else if (e.key === 'Escape') {
+      cancelPlannedHoursEdit();
+    }
+  };
+
   const handleTimeEditKeyPress = (e) => {
     if (e.key === 'Enter') {
       saveTimeEdit();
@@ -847,10 +888,19 @@ Always match the language of the user in your "reply".`;
                 placeholder="New task..."
                 className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
               />
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={plannedHoursInput}
+                onChange={(e) => setPlannedHoursInput(e.target.value)}
+                placeholder="Plan (h)"
+                className="w-24 px-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 bg-white"
+              />
               <select
                 value={selectedPriority}
                 onChange={(e) => setSelectedPriority(e.target.value)}
-                className="px-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 bg-white min-w-[120px]"
+                className="px-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 bg-white min-w-[100px]"
               >
                 <option value="high">🔴 High</option>
                 <option value="medium">🟡 Medium</option>
@@ -909,7 +959,7 @@ Always match the language of the user in your "reply".`;
                       )}
                       
                       {/* Timer display and controls */}
-                      <div className="flex items-center gap-2 ml-2">
+                      <div className="flex items-center gap-1 ml-2">
                         {editingTimeId === task.id ? (
                           <input
                             type="text"
@@ -928,6 +978,28 @@ Always match the language of the user in your "reply".`;
                             title="Click to edit time"
                           >
                             {formatTime(getElapsedTime(task))}
+                          </span>
+                        )}
+                        
+                        {editingPlannedHoursId === task.id ? (
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={editingPlannedHoursValue}
+                            onChange={(e) => setEditingPlannedHoursValue(e.target.value)}
+                            onKeyDown={(e) => handlePlannedHoursEditKeyPress(e, task.id)}
+                            onBlur={() => savePlannedHoursEdit(task.id)}
+                            className="w-12 px-1 py-0.5 text-xs font-mono border border-purple-300 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 bg-white"
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="text-xs font-mono text-gray-400 cursor-pointer hover:text-purple-600 transition-colors"
+                            onClick={() => startEditingPlannedHours(task.id, task.plannedHours)}
+                            title="Click to edit planned hours"
+                          >
+                            / {(task.plannedHours || 0).toFixed(1)}h
                           </span>
                         )}
                         <div className="flex gap-1">
