@@ -22,6 +22,11 @@ function App() {
   const [editingTimeId, setEditingTimeId] = useState(null);
   const [editingTimeValue, setEditingTimeValue] = useState('');
 
+  // Voice recording states
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognitionInstance, setRecognitionInstance] = useState(null);
+  const [chatInputValue, setChatInputValue] = useState('');
+
   // Load tasks from localStorage on mount
   useEffect(() => {
     const savedTasks = localStorage.getItem('vibe-todo-tasks');
@@ -80,6 +85,115 @@ function App() {
     
     return () => clearInterval(interval);
   }, []);
+
+  // Voice recording toggle logic
+  const toggleVoiceRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Распознавание речи не поддерживается вашим браузером. Попробуйте Google Chrome.");
+      return;
+    }
+
+    if (isRecording) {
+      if (recognitionInstance) {
+        recognitionInstance.stop();
+      }
+      setIsRecording(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ru-RU';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setChatInputValue(prev => {
+        const newVal = prev.trim() ? prev.trim() + ' ' + transcript : transcript;
+        setTimeout(() => {
+          const chatInput = document.getElementById('chatInput');
+          if (chatInput) {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
+          }
+        }, 10);
+        return newVal;
+      });
+    };
+
+    recognition.onerror = (e) => {
+      console.error('Speech recognition error:', e.error);
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    setRecognitionInstance(recognition);
+    recognition.start();
+  };
+
+  // Safe and centralized chat message submission helper
+  const handleSendChatMessage = (message) => {
+    if (!message) return;
+
+    // Add user message to UI
+    const messagesContainer = document.getElementById('chatMessages');
+    const userMessage = document.createElement('div');
+    userMessage.className = 'flex items-start space-x-3 fade-in';
+    userMessage.innerHTML = `
+      <div class="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center flex-shrink-0">
+        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+        </svg>
+      </div>
+      <div class="flex-1">
+        <div class="bg-blue-500 text-white rounded-lg p-2 ml-auto max-w-xs">
+          <p class="text-sm">${message}</p>
+        </div>
+      </div>
+    `;
+    messagesContainer.appendChild(userMessage);
+    
+    // Show typing indicator
+    const typingIndicator = document.createElement('div');
+    typingIndicator.id = 'typingIndicator';
+    typingIndicator.className = 'flex items-start space-x-3 fade-in';
+    typingIndicator.innerHTML = `
+      <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+        </svg>
+      </div>
+      <div class="flex-1">
+        <div class="bg-gray-100 rounded-lg p-2 max-w-xs">
+          <div class="flex space-x-1">
+            <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+            <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+            <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    messagesContainer.appendChild(typingIndicator);
+    
+    setChatInputValue('');
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+      chatInput.style.height = 'auto';
+    }
+
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    // Call Gemini API
+    callGeminiAPI(message);
+  };
 
   // Helper to format current tasks as context for Gemini
   const getTasksContext = () => {
@@ -667,57 +781,14 @@ Always match the language of the user in your "reply".`;
                 className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 rows="1"
                 style={{ minHeight: '36px', maxHeight: '80px' }}
+                value={chatInputValue}
+                onChange={(e) => setChatInputValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    const message = e.target.value.trim();
+                    const message = chatInputValue.trim();
                     if (message) {
-                      // Add user message
-                      const messagesContainer = document.getElementById('chatMessages');
-                      const userMessage = document.createElement('div');
-                      userMessage.className = 'flex items-start space-x-3 fade-in';
-                      userMessage.innerHTML = `
-                        <div class="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center flex-shrink-0">
-                          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                          </svg>
-                        </div>
-                        <div class="flex-1">
-                          <div class="bg-blue-500 text-white rounded-lg p-2 ml-auto max-w-xs">
-                            <p class="text-sm">${message}</p>
-                          </div>
-                        </div>
-                      `;
-                      messagesContainer.appendChild(userMessage);
-                      
-                      // Show typing indicator
-                      const typingIndicator = document.createElement('div');
-                      typingIndicator.id = 'typingIndicator';
-                      typingIndicator.className = 'flex items-start space-x-3 fade-in';
-                      typingIndicator.innerHTML = `
-                        <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
-                          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                          </svg>
-                        </div>
-                        <div class="flex-1">
-                          <div class="bg-gray-100 rounded-lg p-2 max-w-xs">
-                            <div class="flex space-x-1">
-                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
-                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
-                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
-                            </div>
-                          </div>
-                        </div>
-                      `;
-                      messagesContainer.appendChild(typingIndicator);
-                      
-                      e.target.value = '';
-                      e.target.style.height = 'auto';
-                      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                      
-                      // Call Gemini API
-                      callGeminiAPI(message);
+                      handleSendChatMessage(message);
                     }
                   }
                   
@@ -726,19 +797,39 @@ Always match the language of the user in your "reply".`;
                   e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
                 }}
               />
+              <button
+                onClick={toggleVoiceRecognition}
+                className={`p-2 rounded-lg transition-all duration-200 text-sm flex items-center justify-center flex-shrink-0 ${
+                  isRecording 
+                    ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-md shadow-red-200' 
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-700'
+                }`}
+                title={isRecording ? 'Остановить запись' : 'Голосовой ввод'}
+                style={{ height: '36px', width: '36px' }}
+              >
+                {isRecording ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H10a1 1 0 01-1-1v-4z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                )}
+              </button>
               <button 
                 onClick={() => {
-                  const input = document.getElementById('chatInput');
-                  const message = input.value.trim();
+                  const message = chatInputValue.trim();
                   if (message) {
-                    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: false }));
+                    handleSendChatMessage(message);
                   }
                 }}
                 className="px-3 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 text-sm font-medium"
               >
                 Send
-              </button>
-            </div>
+            </button>
+          </div>
           </div>
         </div>
 
