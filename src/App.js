@@ -81,6 +81,133 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Gemini API function
+  const callGeminiAPI = async (message) => {
+    let apiKey = localStorage.getItem('gemini_api_key');
+    
+    // Try to load from config.yml first
+    if (!apiKey) {
+      try {
+        const response = await fetch('/config.yml');
+        const configText = await response.text();
+        const match = configText.match(/api_key:\s*"([^"]+)"/);
+        if (match && match[1] && match[1] !== 'YOUR_GEMINI_API_KEY_HERE') {
+          apiKey = match[1];
+          localStorage.setItem('gemini_api_key', apiKey);
+        }
+      } catch (error) {
+        console.log('Could not load config.yml:', error);
+      }
+    }
+    
+    if (!apiKey) {
+      const newKey = prompt('Please enter your Gemini API key:');
+      if (newKey) {
+        localStorage.setItem('gemini_api_key', newKey);
+      } else {
+        // Remove typing indicator and show error
+        const typingIndicator = document.getElementById('typingIndicator');
+        if (typingIndicator) typingIndicator.remove();
+        
+        const messagesContainer = document.getElementById('chatMessages');
+        const errorMessage = document.createElement('div');
+        errorMessage.className = 'flex items-start space-x-3 fade-in';
+        errorMessage.innerHTML = `
+          <div class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
+            <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-2 max-w-xs">
+              <p class="text-sm">API key is required to use the chat.</p>
+            </div>
+          </div>
+        `;
+        messagesContainer.appendChild(errorMessage);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        return;
+      }
+    }
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: message
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192,
+          }
+        })
+      });
+
+      // Remove typing indicator
+      const typingIndicator = document.getElementById('typingIndicator');
+      if (typingIndicator) typingIndicator.remove();
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const aiResponse = data.candidates[0]?.content?.parts[0]?.text || 'No response received';
+
+      // Add AI response
+      const messagesContainer = document.getElementById('chatMessages');
+      const aiMessage = document.createElement('div');
+      aiMessage.className = 'flex items-start space-x-3 fade-in';
+      aiMessage.innerHTML = `
+        <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-gray-100 rounded-lg p-2 max-w-xs">
+            <p class="text-sm text-gray-800">${aiResponse.replace(/\n/g, '<br>')}</p>
+          </div>
+        </div>
+      `;
+      messagesContainer.appendChild(aiMessage);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    } catch (error) {
+      // Remove typing indicator
+      const typingIndicator = document.getElementById('typingIndicator');
+      if (typingIndicator) typingIndicator.remove();
+
+      // Show error message
+      const messagesContainer = document.getElementById('chatMessages');
+      const errorMessage = document.createElement('div');
+      errorMessage.className = 'flex items-start space-x-3 fade-in';
+      errorMessage.innerHTML = `
+        <div class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-2 max-w-xs">
+            <p class="text-sm">Error: ${error.message}</p>
+          </div>
+        </div>
+      `;
+      messagesContainer.appendChild(errorMessage);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  };
+
   const generateId = () => Date.now() + Math.random().toString(36).slice(2, 9);
 
   const addTask = () => {
@@ -132,7 +259,7 @@ function App() {
       return task;
     }));
     
-    // If the task was running and we marked it as completed, clear active task
+    // If task was running and we marked it as completed, clear active task
     const task = tasks.find(t => t.id === id);
     if (task && task.isRunning) {
       setActiveTaskId(null);
@@ -403,319 +530,467 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8 w-full max-w-md">
-        <h1 className="text-3xl font-light text-gray-800 mb-8 text-center">To-Do List</h1>
-        
-        <div className="flex gap-2 mb-8">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="New task..."
-            className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
-          />
-          <select
-            value={selectedPriority}
-            onChange={(e) => setSelectedPriority(e.target.value)}
-            className="px-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 bg-white min-w-[120px]"
-          >
-            <option value="high">🔴 High</option>
-            <option value="medium">🟡 Medium</option>
-            <option value="low">🟢 Low</option>
-          </select>
-          <button
-            onClick={addTask}
-            className="px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all duration-200 font-medium shadow-md hover:shadow-lg whitespace-nowrap"
-          >
-            Add
-          </button>
+    <div className="min-h-screen p-6">
+      <div className="flex gap-6 max-w-7xl mx-auto">
+        {/* Gemini Chat - Left Side */}
+        <div className="w-96 bg-white rounded-2xl shadow-xl flex flex-col" style={{ height: 'calc(100vh - 3rem)' }}>
+          {/* Header */}
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-800">Gemini Chat</h2>
+                  <p className="text-xs text-gray-500">AI Assistant</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  const messages = document.getElementById('chatMessages');
+                  if (messages) {
+                    messages.innerHTML = `
+                      <div class="flex items-start space-x-3 fade-in">
+                        <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+                          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                          </svg>
+                        </div>
+                        <div class="flex-1">
+                          <div class="bg-gray-100 rounded-lg p-2">
+                            <p class="text-sm text-gray-800">Chat cleared. How can I help you today?</p>
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  }
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Messages Container */}
+          <div id="chatMessages" className="flex-1 p-4 overflow-y-auto space-y-3">
+            <div className="flex items-start space-x-3 fade-in">
+              <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+              </div>
+              <div className="flex-1">
+                <div className="bg-gray-100 rounded-lg p-2">
+                  <p className="text-sm text-gray-800">Hello! I'm Gemini Flash. How can I help you with your tasks today?</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Input Area */}
+          <div className="p-4 border-t border-gray-200">
+            <div className="flex items-end space-x-2">
+              <textarea 
+                id="chatInput"
+                placeholder="Ask me anything..."
+                className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows="1"
+                style={{ minHeight: '36px', maxHeight: '80px' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    const message = e.target.value.trim();
+                    if (message) {
+                      // Add user message
+                      const messagesContainer = document.getElementById('chatMessages');
+                      const userMessage = document.createElement('div');
+                      userMessage.className = 'flex items-start space-x-3 fade-in';
+                      userMessage.innerHTML = `
+                        <div class="w-6 h-6 bg-gray-600 rounded-full flex items-center justify-center flex-shrink-0">
+                          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                          </svg>
+                        </div>
+                        <div class="flex-1">
+                          <div class="bg-blue-500 text-white rounded-lg p-2 ml-auto max-w-xs">
+                            <p class="text-sm">${message}</p>
+                          </div>
+                        </div>
+                      `;
+                      messagesContainer.appendChild(userMessage);
+                      
+                      // Show typing indicator
+                      const typingIndicator = document.createElement('div');
+                      typingIndicator.id = 'typingIndicator';
+                      typingIndicator.className = 'flex items-start space-x-3 fade-in';
+                      typingIndicator.innerHTML = `
+                        <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+                          <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                          </svg>
+                        </div>
+                        <div class="flex-1">
+                          <div class="bg-gray-100 rounded-lg p-2 max-w-xs">
+                            <div class="flex space-x-1">
+                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                              <div class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            </div>
+                          </div>
+                        </div>
+                      `;
+                      messagesContainer.appendChild(typingIndicator);
+                      
+                      e.target.value = '';
+                      e.target.style.height = 'auto';
+                      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                      
+                      // Call Gemini API
+                      callGeminiAPI(message);
+                    }
+                  }
+                  
+                  // Auto-resize
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
+                }}
+              />
+              <button 
+                onClick={() => {
+                  const input = document.getElementById('chatInput');
+                  const message = input.value.trim();
+                  if (message) {
+                    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: false }));
+                  }
+                }}
+                className="px-3 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 text-sm font-medium"
+              >
+                Send
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          {tasks.length === 0 ? (
-            <p className="text-gray-400 text-center py-12">No tasks</p>
-          ) : (
-            filteredTasks.map(task => (
-              <div
-                key={task.id}
-                className={`group transition-all duration-300 ${
-                  task.isRemoving ? 'task-exit opacity-0 transform translate-x-4' : 
-                  task.isNew ? 'task-enter' : 
-                  ''
-                }`}
+        {/* To-Do List - Right Side */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8 w-full max-w-md">
+            <h1 className="text-3xl font-light text-gray-800 mb-8 text-center">To-Do List</h1>
+            
+            <div className="flex gap-2 mb-8">
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="New task..."
+                className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
+              />
+              <select
+                value={selectedPriority}
+                onChange={(e) => setSelectedPriority(e.target.value)}
+                className="px-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 bg-white min-w-[120px]"
               >
-                <div className={`flex items-center gap-3 p-4 bg-gray-50 rounded-lg transition-all duration-300 ${
-                  !task.isRemoving && !task.isNew ? 'hover:bg-gray-100 hover:shadow-md hover:translate-x-1' : ''
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={task.completed}
-                    onChange={() => toggleTask(task.id)}
-                    className="w-5 h-5 text-purple-500 rounded focus:ring-purple-500 focus:ring-2 cursor-pointer transition-all duration-200"
-                  />
-                  <span className="text-lg mr-2">{PRIORITIES[task.priority].emoji}</span>
-                  {editingTaskId === task.id ? (
-                    <input
-                      type="text"
-                      value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
-                      onKeyDown={handleEditKeyPress}
-                      onBlur={saveEdit}
-                      className="flex-1 px-2 py-1 border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
-                      autoFocus
-                    />
-                  ) : (
-                    <span
-                      className={`flex-1 text-gray-700 transition-all duration-200 cursor-pointer hover:text-purple-600 ${
-                        task.completed ? 'line-through text-gray-400' : ''
-                      }`}
-                      onClick={() => startEditing(task.id, task.text)}
-                    >
-                      {task.text}
-                    </span>
-                  )}
-                  
-                  {/* Timer display and controls */}
-                  <div className="flex items-center gap-2 ml-2">
-                    {editingTimeId === task.id ? (
-                      <input
-                        type="text"
-                        value={editingTimeValue}
-                        onChange={(e) => setEditingTimeValue(e.target.value)}
-                        onKeyDown={handleTimeEditKeyPress}
-                        onBlur={saveTimeEdit}
-                        className="w-20 px-1 py-0.5 text-xs font-mono border border-purple-300 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 bg-white"
-                        placeholder="00:00:00"
-                        autoFocus
-                      />
-                    ) : (
-                      <span
-                        className="text-xs font-mono text-gray-600 min-w-[60px] cursor-pointer hover:text-purple-600 transition-colors"
-                        onClick={() => startEditingTime(task.id)}
-                        title="Click to edit time"
-                      >
-                        {formatTime(getElapsedTime(task))}
-                      </span>
-                    )}
-                    <div className="flex gap-1">
-                      {!task.completed && !task.isRunning ? (
-                        <button
-                          onClick={() => startTimer(task.id)}
-                          className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
-                          title="Start"
-                        >
-                          ▶️
-                        </button>
-                      ) : null}
-                      {task.isRunning ? (
-                        <button
-                          onClick={() => pauseTimer(task.id)}
-                          className="p-1 text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
-                          title="Pause"
-                        >
-                          ⏸️
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-all duration-200">
-                    <label className="cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`priority-${task.id}`}
-                        value="high"
-                        checked={task.priority === 'high'}
-                        onChange={(e) => changePriority(task.id, e.target.value)}
-                        className="sr-only"
-                      />
-                      <span className={`text-xs px-2 py-1 rounded transition-colors ${
-                        task.priority === 'high' 
-                          ? 'bg-red-100 text-red-600 border border-red-300' 
-                          : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-red-50 hover:text-red-500'
-                      }`}>
-                        🔴
-                      </span>
-                    </label>
-                    <label className="cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`priority-${task.id}`}
-                        value="medium"
-                        checked={task.priority === 'medium'}
-                        onChange={(e) => changePriority(task.id, e.target.value)}
-                        className="sr-only"
-                      />
-                      <span className={`text-xs px-2 py-1 rounded transition-colors ${
-                        task.priority === 'medium' 
-                          ? 'bg-yellow-100 text-yellow-600 border border-yellow-300' 
-                          : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-yellow-50 hover:text-yellow-500'
-                      }`}>
-                        🟡
-                      </span>
-                    </label>
-                    <label className="cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`priority-${task.id}`}
-                        value="low"
-                        checked={task.priority === 'low'}
-                        onChange={(e) => changePriority(task.id, e.target.value)}
-                        className="sr-only"
-                      />
-                      <span className={`text-xs px-2 py-1 rounded transition-colors ${
-                        task.priority === 'low' 
-                          ? 'bg-green-100 text-green-600 border border-green-300' 
-                          : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-green-50 hover:text-green-500'
-                      }`}>
-                        🟢
-                      </span>
-                    </label>
-                  </div>
-                  <button
-                    onClick={() => toggleTaskExpansion(task.id)}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-all duration-200 p-1 hover:bg-gray-50 rounded"
+                <option value="high">🔴 High</option>
+                <option value="medium">🟡 Medium</option>
+                <option value="low">🟢 Low</option>
+              </select>
+              <button
+                onClick={addTask}
+                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all duration-200 font-medium shadow-md hover:shadow-lg whitespace-nowrap"
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {tasks.length === 0 ? (
+                <p className="text-gray-400 text-center py-12">No tasks</p>
+              ) : (
+                filteredTasks.map(task => (
+                  <div
+                    key={task.id}
+                    className={`group transition-all duration-300 ${
+                      task.isRemoving ? 'task-exit opacity-0 transform translate-x-4' : 
+                      task.isNew ? 'task-enter' : 
+                      ''
+                    }`}
                   >
-                    <svg
-                      className={`w-4 h-4 transition-transform duration-200 ${
-                        expandedTasks.has(task.id) ? 'rotate-180' : ''
-                      }`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => deleteTask(task.id)}
-                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all duration-200 p-2 hover:bg-red-50 rounded-md"
-                  >
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
-                </div>
-                
-                {/* Subtasks section */}
-                <div
-                  className={`overflow-hidden transition-all duration-300 ${
-                    expandedTasks.has(task.id) ? 'max-h-96' : 'max-h-0'
-                  }`}
-                >
-                  <div className="pl-6 pt-3 border-t border-gray-100/50 w-full">
-                    {/* Add subtask input */}
-                    <div className="flex items-center gap-2 mb-3 w-full">
+                    <div className={`flex items-center gap-3 p-4 bg-gray-50 rounded-lg transition-all duration-300 ${
+                      !task.isRemoving && !task.isNew ? 'hover:bg-gray-100 hover:shadow-md hover:translate-x-1' : ''
+                    }`}>
                       <input
-                        type="text"
-                        value={subtaskInputs[task.id] || ''}
-                        onChange={(e) => handleSubtaskInputChange(task.id, e.target.value)}
-                        onKeyDown={(e) => handleSubtaskKeyPress(e, task.id)}
-                        placeholder="Add subtask..."
-                        className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-transparent"
+                        type="checkbox"
+                        checked={task.completed}
+                        onChange={() => toggleTask(task.id)}
+                        className="w-5 h-5 text-purple-500 rounded focus:ring-purple-500 focus:ring-2 cursor-pointer transition-all duration-200"
                       />
+                      <span className="text-lg mr-2">{PRIORITIES[task.priority].emoji}</span>
+                      {editingTaskId === task.id ? (
+                        <input
+                          type="text"
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          onKeyDown={handleEditKeyPress}
+                          onBlur={saveEdit}
+                          className="flex-1 px-2 py-1 border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                          autoFocus
+                        />
+                      ) : (
+                        <span
+                          className={`flex-1 text-gray-700 transition-all duration-200 cursor-pointer hover:text-purple-600 ${
+                            task.completed ? 'line-through text-gray-400' : ''
+                          }`}
+                          onClick={() => startEditing(task.id, task.text)}
+                        >
+                          {task.text}
+                        </span>
+                      )}
+                      
+                      {/* Timer display and controls */}
+                      <div className="flex items-center gap-2 ml-2">
+                        {editingTimeId === task.id ? (
+                          <input
+                            type="text"
+                            value={editingTimeValue}
+                            onChange={(e) => setEditingTimeValue(e.target.value)}
+                            onKeyDown={handleTimeEditKeyPress}
+                            onBlur={saveTimeEdit}
+                            className="w-20 px-1 py-0.5 text-xs font-mono border border-purple-300 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 bg-white"
+                            placeholder="00:00:00"
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="text-xs font-mono text-gray-600 min-w-[60px] cursor-pointer hover:text-purple-600 transition-colors"
+                            onClick={() => startEditingTime(task.id)}
+                            title="Click to edit time"
+                          >
+                            {formatTime(getElapsedTime(task))}
+                          </span>
+                        )}
+                        <div className="flex gap-1">
+                          {!task.completed && !task.isRunning ? (
+                            <button
+                              onClick={() => startTimer(task.id)}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                              title="Start"
+                            >
+                              ▶️
+                            </button>
+                          ) : null}
+                          {task.isRunning ? (
+                            <button
+                              onClick={() => pauseTimer(task.id)}
+                              className="p-1 text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
+                              title="Pause"
+                            >
+                              ⏸️
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-all duration-200">
+                        <label className="cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`priority-${task.id}`}
+                            value="high"
+                            checked={task.priority === 'high'}
+                            onChange={(e) => changePriority(task.id, e.target.value)}
+                            className="sr-only"
+                          />
+                          <span className={`text-xs px-2 py-1 rounded transition-colors ${
+                            task.priority === 'high' 
+                              ? 'bg-red-100 text-red-600 border border-red-300' 
+                              : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-red-50 hover:text-red-500'
+                          }`}>
+                            🔴
+                          </span>
+                        </label>
+                        <label className="cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`priority-${task.id}`}
+                            value="medium"
+                            checked={task.priority === 'medium'}
+                            onChange={(e) => changePriority(task.id, e.target.value)}
+                            className="sr-only"
+                          />
+                          <span className={`text-xs px-2 py-1 rounded transition-colors ${
+                            task.priority === 'medium' 
+                              ? 'bg-yellow-100 text-yellow-600 border border-yellow-300' 
+                              : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-yellow-50 hover:text-yellow-500'
+                          }`}>
+                            🟡
+                          </span>
+                        </label>
+                        <label className="cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`priority-${task.id}`}
+                            value="low"
+                            checked={task.priority === 'low'}
+                            onChange={(e) => changePriority(task.id, e.target.value)}
+                            className="sr-only"
+                          />
+                          <span className={`text-xs px-2 py-1 rounded transition-colors ${
+                            task.priority === 'low' 
+                              ? 'bg-green-100 text-green-600 border border-green-300' 
+                              : 'bg-gray-100 text-gray-400 border border-gray-200 hover:bg-green-50 hover:text-green-500'
+                          }`}>
+                            🟢
+                          </span>
+                        </label>
+                      </div>
                       <button
-                        onClick={() => addSubtask(task.id)}
-                        className="px-3 py-2 text-sm bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors"
+                        onClick={() => toggleTaskExpansion(task.id)}
+                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-all duration-200 p-1 hover:bg-gray-50 rounded"
                       >
-                        +
+                        <svg
+                          className={`w-4 h-4 transition-transform duration-200 ${
+                            expandedTasks.has(task.id) ? 'rotate-180' : ''
+                          }`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => deleteTask(task.id)}
+                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all duration-200 p-2 hover:bg-red-50 rounded-md"
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
                       </button>
                     </div>
                     
-                    {/* Subtasks list */}
-                    {task.subtasks.length > 0 && (
-                      <div className="space-y-2">
-                        {task.subtasks.map(subtask => (
-                          <div
-                            key={subtask.id}
-                            className="group flex items-center gap-2 p-2 text-sm bg-gray-50/50 rounded hover:bg-gray-100/50 transition-colors"
+                    {/* Subtasks section */}
+                    <div
+                      className={`overflow-hidden transition-all duration-300 ${
+                        expandedTasks.has(task.id) ? 'max-h-96' : 'max-h-0'
+                      }`}
+                    >
+                      <div className="pl-6 pt-3 border-t border-gray-100/50 w-full">
+                        {/* Add subtask input */}
+                        <div className="flex items-center gap-2 mb-3 w-full">
+                          <input
+                            type="text"
+                            value={subtaskInputs[task.id] || ''}
+                            onChange={(e) => handleSubtaskInputChange(task.id, e.target.value)}
+                            onKeyDown={(e) => handleSubtaskKeyPress(e, task.id)}
+                            placeholder="Add subtask..."
+                            className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-transparent"
+                          />
+                          <button
+                            onClick={() => addSubtask(task.id)}
+                            className="px-3 py-2 text-sm bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors"
                           >
-                            <input
-                              type="checkbox"
-                              checked={subtask.completed}
-                              onChange={() => toggleSubtask(task.id, subtask.id)}
-                              className="w-4 h-4 text-purple-500 rounded focus:ring-purple-500 focus:ring-1 cursor-pointer"
-                            />
-                            <span
-                              className={`flex-1 text-gray-600 ${
-                                subtask.completed ? 'line-through text-gray-400' : ''
-                              }`}
-                            >
-                              {subtask.text}
-                            </span>
-                            <button
-                              onClick={() => deleteSubtask(task.id, subtask.id)}
-                              className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all duration-200 p-1 hover:bg-red-50 rounded"
-                            >
-                              <svg
-                                className="w-3 h-3"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
+                            +
+                          </button>
+                        </div>
+                        
+                        {/* Subtasks list */}
+                        {task.subtasks.length > 0 && (
+                          <div className="space-y-2">
+                            {task.subtasks.map(subtask => (
+                              <div
+                                key={subtask.id}
+                                className="group flex items-center gap-2 p-2 text-sm bg-gray-50/50 rounded hover:bg-gray-100/50 transition-colors"
                               >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M6 18L18 6M6 6l12 12"
+                                <input
+                                  type="checkbox"
+                                  checked={subtask.completed}
+                                  onChange={() => toggleSubtask(task.id, subtask.id)}
+                                  className="w-4 h-4 text-purple-500 rounded focus:ring-purple-500 focus:ring-1 cursor-pointer"
                                 />
-                              </svg>
-                            </button>
+                                <span
+                                  className={`flex-1 text-gray-600 ${
+                                    subtask.completed ? 'line-through text-gray-400' : ''
+                                  }`}
+                                >
+                                  {subtask.text}
+                                </span>
+                                <button
+                                  onClick={() => deleteSubtask(task.id, subtask.id)}
+                                  className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all duration-200 p-1 hover:bg-red-50 rounded"
+                                >
+                                  <svg
+                                    className="w-3 h-3"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M6 18L18 6M6 6l12 12"
+                                    />
+                                  </svg>
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {tasks.length > 0 && (
-          <div className="mt-8 pt-6 border-t border-gray-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500">
-                {activeCount} of {tasks.length} active
-              </p>
-              {completedCount > 0 && (
-                <button
-                  onClick={() => setShowCompleted(!showCompleted)}
-                  className="text-sm text-purple-600 hover:text-purple-700 transition-colors"
-                >
-                  {showCompleted ? 'Hide' : 'Show'} completed ({completedCount})
-                </button>
+                ))
               )}
             </div>
-            
-            {!showCompleted && completedCount > 0 && (
-              <div className="text-center">
-                <button
-                  onClick={() => setShowCompleted(true)}
-                  className="text-xs text-gray-400 hover:text-gray-500 transition-colors"
-                >
-                  View {completedCount} completed {completedCount === 1 ? 'task' : 'tasks'}
-                </button>
+
+            {tasks.length > 0 && (
+              <div className="mt-8 pt-6 border-t border-gray-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-500">
+                    {activeCount} of {tasks.length} active
+                  </p>
+                  {completedCount > 0 && (
+                    <button
+                      onClick={() => setShowCompleted(!showCompleted)}
+                      className="text-sm text-purple-600 hover:text-purple-700 transition-colors"
+                    >
+                      {showCompleted ? 'Hide' : 'Show'} completed ({completedCount})
+                    </button>
+                  )}
+                </div>
+                
+                {!showCompleted && completedCount > 0 && (
+                  <div className="text-center">
+                    <button
+                      onClick={() => setShowCompleted(true)}
+                      className="text-xs text-gray-400 hover:text-gray-500 transition-colors"
+                    >
+                      View {completedCount} completed {completedCount === 1 ? 'task' : 'tasks'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
